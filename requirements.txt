@@ -4,4 +4,4 @@ scikit-learn
 nltk
 pandas
 openpyxl
-tensorflow
+tensorflow-cpu==2.17.0
