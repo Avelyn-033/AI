@@ -4,3 +4,4 @@ scikit-learn
 nltk
 pandas
 openpyxl
+tensorflow
