@@ -11,6 +11,7 @@ import os
 import joblib
 import numpy as np
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 from nlp_utils import preprocess_text
@@ -134,9 +135,62 @@ with tab_predict:
 with tab_compare:
     st.subheader("Model performance on the held-out test set")
     df = load_comparison_table()
+
     if df is None:
         st.info("Run `train.py` first to generate model_comparison_results.csv.")
     else:
-        st.dataframe(df, use_container_width=True)
         metric_cols = [c for c in ["Accuracy", "Precision", "Recall", "F1"] if c in df.columns]
-        st.bar_chart(df.set_index("Model")[metric_cols])
+
+        # -------------------------------------------------------------
+        # "Best Model per Key Metric" cards
+        # -------------------------------------------------------------
+        st.markdown("#### 🏆 Best Model per Key Metric")
+        cols = st.columns(len(metric_cols))
+        for col, metric in zip(cols, metric_cols):
+            best_row = df.loc[df[metric].idxmax()]
+            with col:
+                st.metric(
+                    label=metric,
+                    value=f"{best_row[metric]*100:.2f}%" if best_row[metric] <= 1 else f"{best_row[metric]:.2f}",
+                )
+                st.caption(f"🔺 {best_row['Model']}")
+
+        st.divider()
+
+        # -------------------------------------------------------------
+        # Data table
+        # -------------------------------------------------------------
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+        # -------------------------------------------------------------
+        # Grouped bar chart (Plotly) — replaces the old st.bar_chart,
+        # which STACKS the metrics into one bar per model instead of
+        # showing them side-by-side, producing a confusing chart with
+        # a broken-looking y-axis.
+        # -------------------------------------------------------------
+        st.markdown("#### Visual Comparison")
+
+        # Melt to long format: one row per (Model, Metric, Value)
+        plot_df = df.melt(id_vars="Model", value_vars=metric_cols,
+                           var_name="Metric", value_name="Score")
+        # Convert to percentage if scores are stored as 0-1 fractions
+        if plot_df["Score"].max() <= 1:
+            plot_df["Score"] = plot_df["Score"] * 100
+
+        fig = px.bar(
+            plot_df,
+            x="Metric",
+            y="Score",
+            color="Model",
+            barmode="group",
+            text=plot_df["Score"].round(1).astype(str) + "%",
+            color_discrete_sequence=px.colors.qualitative.Set1,
+        )
+        fig.update_traces(textposition="outside")
+        fig.update_layout(
+            yaxis_title="Score (%)",
+            yaxis_range=[0, 100],
+            legend_title="Model",
+            margin=dict(t=20, b=20),
+        )
+        st.plotly_chart(fig, use_container_width=True)
