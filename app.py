@@ -3,6 +3,8 @@
 Streamlit UI for the WOS-46985 Domain Classifier.
 Only loads pre-trained artifacts produced by train.py — no training happens here.
 
+Run with:
+    streamlit run app.py
 """
 
 import os
@@ -17,7 +19,32 @@ from nlp_utils import preprocess_text
 MODEL_DIR = "models"
 MIN_WORDS_FOR_RELIABLE_PREDICTION = 20
 
+# Abbreviation -> full domain name, used to display predictions as
+# "CS (Computer Science)" instead of just "CS", and to list all 7
+# domains the classifier can predict.
+DOMAIN_FULL_NAMES = {
+    "CS": "Computer Science",
+    "Medical": "Medical Science",
+    "Civil": "Civil Engineering",
+    "ECE": "Electrical Engineering",
+    "biochemistry": "Biochemistry",
+    "MAE": "Mechanical Engineering",
+    "Psychology": "Psychology",
+}
 
+
+def format_domain(label: str) -> str:
+    """Return 'CS (Computer Science)' style label; falls back to the raw
+    label if it isn't in the lookup (e.g. capitalization mismatch)."""
+    full = DOMAIN_FULL_NAMES.get(label)
+    return f"{label} ({full})" if full else label
+
+
+# ---------------------------------------------------------------------------
+# Cached loaders — Streamlit re-runs the whole script on every interaction,
+# so @st.cache_resource makes sure the (large) model files are loaded once
+# and reused, not re-read from disk on every keystroke.
+# ---------------------------------------------------------------------------
 @st.cache_resource
 def load_artifacts():
     tfidf = joblib.load(os.path.join(MODEL_DIR, "tfidf.joblib"))
@@ -94,6 +121,15 @@ st.set_page_config(page_title="Research Domain Classifier", layout="wide")
 st.title("📄 Research Abstract Domain Classifier")
 st.caption("WOS-46985 dataset — predicts one of 7 academic domains from an abstract.")
 
+with st.expander("📚 See all 7 domains this classifier predicts"):
+    domain_cols = st.columns(2)
+    domain_items = list(DOMAIN_FULL_NAMES.items())
+    half = (len(domain_items) + 1) // 2
+    for col, chunk in zip(domain_cols, [domain_items[:half], domain_items[half:]]):
+        with col:
+            for abbr, full in chunk:
+                st.markdown(f"- **{abbr}** — {full}")
+
 tab_predict, tab_compare = st.tabs(["🔮 Predict", "📊 Model Comparison"])
 
 with tab_predict:
@@ -121,15 +157,23 @@ with tab_predict:
                 st.warning(f"⚠️ {error}")
             else:
                 best_label, best_conf = ranked[0]
-                st.success(f"**Predicted Domain: {best_label}**  ({best_conf:.1f}% confidence)")
+                st.success(f"**Predicted Domain: {format_domain(best_label)}**  ({best_conf:.1f}% confidence)")
 
+                # Keep the x-axis labels short (just the abbreviation) so they
+                # stay horizontal and readable; the full name shows on hover
+                # and is already spelled out in the success banner above.
                 chart_df = pd.DataFrame(ranked, columns=["Domain", "Confidence (%)"])
+                chart_df["Full Name"] = chart_df["Domain"].map(DOMAIN_FULL_NAMES).fillna("")
                 fig_pred = px.bar(
                     chart_df, x="Domain", y="Confidence (%)",
                     text=chart_df["Confidence (%)"].round(1).astype(str) + "%",
+                    custom_data=["Full Name"],
                     color_discrete_sequence=["#7CC3FA"],
                 )
-                fig_pred.update_traces(textposition="outside")
+                fig_pred.update_traces(
+                    textposition="outside",
+                    hovertemplate="<b>%{x} (%{customdata[0]})</b><br>Confidence: %{y:.1f}%<extra></extra>",
+                )
                 fig_pred.update_layout(
                     xaxis_tickangle=0,   # keep domain labels horizontal
                     yaxis_range=[0, 100],
@@ -167,6 +211,12 @@ with tab_compare:
         # -------------------------------------------------------------
         st.dataframe(df, use_container_width=True, hide_index=True)
 
+        # -------------------------------------------------------------
+        # Grouped bar chart (Plotly) — replaces the old st.bar_chart,
+        # which STACKS the metrics into one bar per model instead of
+        # showing them side-by-side, producing a confusing chart with
+        # a broken-looking y-axis.
+        # -------------------------------------------------------------
         st.markdown("#### Visual Comparison")
 
         # Melt to long format: one row per (Model, Metric, Value)
